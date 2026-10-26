@@ -9,6 +9,7 @@ import {
   getDiff,
   getHunks,
   getStatus,
+  listProviders,
   resolveConflict,
   stage,
   unstage,
@@ -22,6 +23,7 @@ import {
   gitDiscardRpc,
   gitHunksRpc,
   gitMessageRpc,
+  gitProvidersRpc,
   gitResolveRpc,
   gitStageRpc,
   gitStatusRpc,
@@ -39,6 +41,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(gitDiscardRpc, discard);
   server.handle(gitAbortRpc, abortOperation);
   server.handle(gitConflictSidesRpc, getConflictSides);
+  server.handle(gitProvidersRpc, listProviders);
   server.handle(gitCommitRpc, commit);
   server.handle(gitMessageRpc, generateMessage);
   return () => {};

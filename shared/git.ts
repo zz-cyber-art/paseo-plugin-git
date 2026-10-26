@@ -126,3 +126,19 @@ export const gitConflictSidesRpc = defineRpc({
     error: z.string().optional(),
   }),
 });
+
+export const providerOptionSchema = z.object({
+  value: z.string(), // "provider/model"
+  label: z.string(),
+});
+
+export const gitProvidersRpc = defineRpc({
+  name: "git.providers",
+  input: z.object({}),
+  output: z.object({
+    ok: z.boolean(),
+    options: z.array(providerOptionSchema),
+    default: z.string().optional(),
+    error: z.string().optional(),
+  }),
+});

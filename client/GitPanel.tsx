@@ -1,23 +1,24 @@
+import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
 import { useRpc, useWorkspace } from "@getpaseo/plugin/client";
+import { Modal } from "@getpaseo/plugin/client/react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import {
   gitAbortRpc,
-  gitApplyHunkRpc,
   gitCommitRpc,
-  gitConflictSidesRpc,
-  gitDiffRpc,
   gitDiscardRpc,
-  gitHunksRpc,
   gitMessageRpc,
+  gitProvidersRpc,
   gitResolveRpc,
   gitStageRpc,
   gitStatusRpc,
   gitUnstageRpc,
   type FileChange,
 } from "../shared/git";
+import { openFileTab } from "./fileTab";
+import { makeStyles } from "./styles";
 
 const STATUS_LABELS: Record<string, string> = {
   M: "Modified",
@@ -37,10 +38,6 @@ const STATUS_LABELS: Record<string, string> = {
   "?": "Untracked",
 };
 
-function statusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? status;
-}
-
 const OP_LABELS: Record<string, string> = {
   merge: "Merge",
   rebase: "Rebase",
@@ -49,12 +46,27 @@ const OP_LABELS: Record<string, string> = {
   bisect: "Bisect",
 };
 
-function hunkTitle(patch: string): string {
-  const header = patch.split("\n").find((l) => l.startsWith("@@"));
-  return header ?? patch.split("\n")[0] ?? "hunk";
+function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status;
 }
 
-type Viewing = { path: string; staged: boolean };
+function statusColor(status: string, colors: PluginTheme["colors"]): string {
+  switch (status[0]) {
+    case "A":
+      return colors.statusSuccess;
+    case "D":
+      return colors.statusDanger;
+    case "R":
+    case "C":
+      return colors.accent;
+    case "?":
+      return colors.foregroundMuted;
+    case "U":
+      return colors.statusDanger;
+    default:
+      return colors.statusWarning;
+  }
+}
 
 export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
   const colors = theme.colors;
@@ -69,20 +81,17 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const statusRpc = useRpc(gitStatusRpc);
   const stageRpc = useRpc(gitStageRpc);
   const unstageRpc = useRpc(gitUnstageRpc);
-  const diffRpc = useRpc(gitDiffRpc);
-  const hunksRpc = useRpc(gitHunksRpc);
-  const applyHunkRpc = useRpc(gitApplyHunkRpc);
-  const resolveRpc = useRpc(gitResolveRpc);
   const discardRpc = useRpc(gitDiscardRpc);
+  const resolveRpc = useRpc(gitResolveRpc);
   const commitRpc = useRpc(gitCommitRpc);
   const messageRpc = useRpc(gitMessageRpc);
   const abortRpc = useRpc(gitAbortRpc);
-  const conflictSidesRpc = useRpc(gitConflictSidesRpc);
+  const providersRpc = useRpc(gitProvidersRpc);
   const queryClient = useQueryClient();
 
   const [message, setMessage] = useState("");
-  const [provider, setProvider] = useState("claude/claude-sonnet-5-5");
-  const [viewing, setViewing] = useState<Viewing | null>(null);
+  const [provider, setProvider] = useState("");
+  const [providerPickerOpen, setProviderPickerOpen] = useState(false);
 
   const statusQuery = useQuery({
     queryKey: ["git.status", cwd],
@@ -91,28 +100,14 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
     refetchInterval: 5000,
   });
 
-  const hunksQuery = useQuery({
-    queryKey: ["git.hunks", cwd, viewing?.path ?? "", viewing?.staged ?? false],
-    queryFn: () => hunksRpc({ cwd, path: viewing!.path, staged: viewing!.staged }),
-    enabled: isGit && !!viewing,
-  });
-
-  const diffQuery = useQuery({
-    queryKey: ["git.diff", cwd, viewing?.path ?? "", viewing?.staged ?? false],
-    queryFn: () => diffRpc({ cwd, path: viewing!.path, staged: viewing!.staged }),
-    enabled: isGit && !!viewing,
-  });
-
-  const conflictSidesQuery = useQuery({
-    queryKey: ["git.conflict-sides", cwd, viewing?.path ?? ""],
-    queryFn: () => conflictSidesRpc({ cwd, path: viewing!.path }),
-    enabled: isGit && !!viewing,
+  const providersQuery = useQuery({
+    queryKey: ["git.providers"],
+    queryFn: () => providersRpc({}),
+    staleTime: 5 * 60 * 1000,
   });
 
   const invalidateStatus = () =>
     void queryClient.invalidateQueries({ queryKey: ["git.status", cwd] });
-  const invalidateHunks = () =>
-    void queryClient.invalidateQueries({ queryKey: ["git.hunks", cwd] });
 
   const stageMutation = useMutation({
     mutationFn: (paths: string[]) => stageRpc({ cwd, paths }),
@@ -122,22 +117,14 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
     mutationFn: (paths: string[]) => unstageRpc({ cwd, paths }),
     onSettled: invalidateStatus,
   });
-  const applyHunkMutation = useMutation({
-    mutationFn: (patch: string) =>
-      applyHunkRpc({ cwd, patch, staged: viewing?.staged ?? false }),
-    onSettled: () => {
-      invalidateStatus();
-      invalidateHunks();
-    },
-  });
-  const resolveMutation = useMutation({
-    mutationFn: (strategy: "ours" | "theirs" | "mark") =>
-      resolveRpc({ cwd, path: viewing?.path ?? "", strategy }),
-    onSettled: invalidateStatus,
-  });
   const discardMutation = useMutation({
     mutationFn: (input: { path: string; untracked: boolean }) =>
       discardRpc({ cwd, path: input.path, untracked: input.untracked }),
+    onSettled: invalidateStatus,
+  });
+  const resolveMutation = useMutation({
+    mutationFn: (input: { path: string; strategy: "ours" | "theirs" | "mark" }) =>
+      resolveRpc({ cwd, path: input.path, strategy: input.strategy }),
     onSettled: invalidateStatus,
   });
   const abortMutation = useMutation({
@@ -147,113 +134,48 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const commitMutation = useMutation({
     mutationFn: () => commitRpc({ cwd, message }),
     onSuccess: (res) => {
-      if (res.ok) {
-        setMessage("");
-        setViewing(null);
-      }
+      if (res.ok) setMessage("");
     },
     onSettled: invalidateStatus,
   });
   const messageMutation = useMutation({
-    mutationFn: () => messageRpc({ cwd, provider: provider.trim() || undefined }),
+    mutationFn: () => messageRpc({ cwd, provider: effectiveProvider || undefined }),
     onSuccess: (res) => {
       if (res.ok && res.message) setMessage(res.message);
     },
   });
 
-  const styles = useMemo(
-    () => ({
-      screen: {
-        flex: 1,
-        backgroundColor: colors.surface0,
-        padding: compact ? 12 : 20,
-        gap: compact ? 10 : 14,
-      },
-      card: {
-        backgroundColor: colors.surface1,
-        borderColor: colors.border,
-        borderWidth: 1,
-        borderRadius: 10,
-        padding: compact ? 10 : 14,
-        gap: 6,
-      },
-      title: { color: colors.foreground, fontSize: compact ? 14 : 16, fontWeight: "700" as const },
-      subtitle: { color: colors.foregroundMuted, fontSize: compact ? 11 : 12 },
-      muted: { color: colors.foregroundMuted, fontSize: compact ? 12 : 13 },
-      error: { color: colors.statusDanger, fontSize: compact ? 12 : 13 },
-      warning: { color: colors.statusWarning, fontSize: compact ? 12 : 13 },
-      row: {
-        flexDirection: "row" as const,
-        alignItems: "center" as const,
-        gap: 8,
-        paddingVertical: 6,
-      },
-      fileButton: { flex: 1 },
-      fileName: { color: colors.foreground, fontSize: compact ? 12 : 13 },
-      fileStatus: { color: colors.foregroundMuted, fontSize: compact ? 10 : 11 },
-      smallButton: {
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-        borderRadius: 6,
-        backgroundColor: colors.surface2,
-        borderColor: colors.border,
-        borderWidth: 1,
-      },
-      smallButtonText: { color: colors.foreground, fontSize: compact ? 11 : 12 },
-      dangerButton: {
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-        borderRadius: 6,
-        backgroundColor: colors.surface2,
-        borderColor: colors.statusDanger,
-        borderWidth: 1,
-      },
-      dangerButtonText: { color: colors.statusDanger, fontSize: compact ? 11 : 12 },
-      primaryButton: {
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 8,
-        backgroundColor: colors.accent,
-        alignItems: "center" as const,
-      },
-      primaryButtonText: {
-        color: colors.accentForeground,
-        fontSize: compact ? 12 : 13,
-        fontWeight: "600" as const,
-      },
-      disabledButton: { opacity: 0.4 },
-      input: {
-        backgroundColor: colors.surface1,
-        borderColor: colors.border,
-        borderWidth: 1,
-        borderRadius: 8,
-        color: colors.foreground,
-        paddingHorizontal: 10,
-        paddingVertical: 8,
-        fontSize: compact ? 12 : 13,
-      },
-      hunkBox: {
-        backgroundColor: colors.surface0,
-        borderColor: colors.border,
-        borderWidth: 1,
-        borderRadius: 8,
-        padding: 8,
-        gap: 8,
-      },
-      diffBox: {
-        backgroundColor: colors.surface0,
-        borderColor: colors.border,
-        borderWidth: 1,
-        borderRadius: 8,
-        padding: 10,
-        maxHeight: 320,
-      },
-      diffText: { color: colors.foregroundMuted, fontSize: compact ? 10 : 11 },
-    }),
-    [colors, compact],
-  );
+  const styles = useMemo(() => makeStyles(colors, compact), [colors, compact]);
 
   const data = statusQuery.data;
+
+  const effectiveProvider = provider || providersQuery.data?.default || "";
+  const providerLabel =
+    providersQuery.data?.options.find((o) => o.value === effectiveProvider)?.label ??
+    effectiveProvider ??
+    "Select provider…";
+
+  const renderBadge = (status: string) => (
+    <View
+      style={{
+        alignSelf: "flex-start",
+        backgroundColor: colors.surface2,
+        borderRadius: 4,
+        paddingHorizontal: 6,
+        paddingVertical: 1,
+      }}
+    >
+      <Text
+        style={{
+          color: statusColor(status, colors),
+          fontSize: compact ? 9 : 10,
+          fontWeight: "600" as const,
+        }}
+      >
+        {statusLabel(status)}
+      </Text>
+    </View>
+  );
 
   if (!isGit) {
     return (
@@ -270,34 +192,31 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const hasStaged = staged.length > 0;
   const canCommit = hasStaged && message.trim().length > 0;
 
-  const viewingUntracked =
-    !!viewing && !viewing.staged && untracked.some((f) => f.path === viewing.path);
-  const viewingConflict =
-    !!viewing && conflicts.some((f) => f.path === viewing.path);
-
   const renderFileRow = (file: FileChange, isStaged: boolean, isUntracked: boolean) => (
     <View key={`${isStaged ? "s" : "u"}-${file.path}`} style={styles.row}>
       <Pressable
         accessibilityRole="button"
-        style={styles.fileButton}
+        style={({ pressed }) => [styles.fileButton, pressed && { opacity: 0.6 }]}
         onPress={() =>
-          setViewing((v) =>
-            v?.path === file.path && v.staged === isStaged
-              ? null
-              : { path: file.path, staged: isStaged },
-          )
+          openFileTab({
+            workspaceId,
+            cwd,
+            path: file.path,
+            staged: isStaged,
+            kind: isUntracked ? "untracked" : "tracked",
+          })
         }
       >
         <Text style={styles.fileName} numberOfLines={1}>
           {file.path}
         </Text>
-        <Text style={styles.fileStatus}>{statusLabel(file.status)}</Text>
+        {renderBadge(file.status)}
       </Pressable>
       {isStaged ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Unstage ${file.path}`}
-          style={styles.smallButton}
+          style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
           onPress={() => unstageMutation.mutate([file.path])}
         >
           <Text style={styles.smallButtonText}>Unstage</Text>
@@ -307,7 +226,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Stage ${file.path}`}
-            style={styles.smallButton}
+            style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
             onPress={() => stageMutation.mutate([file.path])}
           >
             <Text style={styles.smallButtonText}>Stage</Text>
@@ -315,7 +234,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Discard changes to ${file.path}`}
-            style={styles.dangerButton}
+            style={({ pressed }) => [styles.dangerButton, pressed && { opacity: 0.6 }]}
             onPress={() => discardMutation.mutate({ path: file.path, untracked: isUntracked })}
           >
             <Text style={styles.dangerButtonText}>Discard</Text>
@@ -354,238 +273,27 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
         </View>
       )}
 
-      {data?.operation && (
-        <View style={styles.card}>
-          <View style={styles.row}>
-            <Text style={styles.warning}>
-              In progress: {OP_LABELS[data.operation] ?? data.operation}
-            </Text>
-            <View style={{ flex: 1 }} />
-            <Pressable
-              accessibilityRole="button"
-              style={styles.dangerButton}
-              onPress={() => abortMutation.mutate()}
-            >
-              <Text style={styles.dangerButtonText}>
-                {abortMutation.isPending ? "Aborting…" : "Abort"}
-              </Text>
-            </Pressable>
-          </View>
-          {abortMutation.data?.error && (
-            <Text style={styles.error}>{abortMutation.data.error}</Text>
-          )}
-        </View>
-      )}
-
-      {conflicts.length > 0 && (
-        <View style={styles.card}>
-          <Text style={styles.warning}>Conflicts ({conflicts.length})</Text>
-          {conflicts.map((file) => (
-            <View key={`c-${file.path}`} style={styles.row}>
-              <Pressable
-                accessibilityRole="button"
-                style={styles.fileButton}
-                onPress={() =>
-                  setViewing((v) =>
-                    v?.path === file.path && !v.staged ? null : { path: file.path, staged: false },
-                  )
-                }
-              >
-                <Text style={styles.fileName} numberOfLines={1}>
-                  {file.path}
-                </Text>
-                <Text style={styles.fileStatus}>{statusLabel(file.status)}</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                style={styles.smallButton}
-                onPress={() => {
-                  setViewing({ path: file.path, staged: false });
-                  resolveMutation.mutate("ours");
-                }}
-              >
-                <Text style={styles.smallButtonText}>Ours</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                style={styles.smallButton}
-                onPress={() => {
-                  setViewing({ path: file.path, staged: false });
-                  resolveMutation.mutate("theirs");
-                }}
-              >
-                <Text style={styles.smallButtonText}>Theirs</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                style={styles.smallButton}
-                onPress={() => resolveMutation.mutate("mark")}
-              >
-                <Text style={styles.smallButtonText}>Mark</Text>
-              </Pressable>
-            </View>
-          ))}
-          {resolveMutation.data?.error && (
-            <Text style={styles.error}>{resolveMutation.data.error}</Text>
-          )}
-        </View>
-      )}
-
-      {hasStaged && (
-        <View style={styles.card}>
-          <View style={styles.row}>
-            <Text style={styles.title}>Staged ({staged.length})</Text>
-            <View style={{ flex: 1 }} />
-            <Pressable
-              accessibilityRole="button"
-              style={styles.smallButton}
-              onPress={() => unstageMutation.mutate([])}
-            >
-              <Text style={styles.smallButtonText}>Unstage all</Text>
-            </Pressable>
-          </View>
-          {staged.map((f) => renderFileRow(f, true, false))}
-        </View>
-      )}
-
-      <View style={styles.card}>
-        <View style={styles.row}>
-          <Text style={styles.title}>Changes ({unstaged.length + untracked.length})</Text>
-          <View style={{ flex: 1 }} />
-          <Pressable
-            accessibilityRole="button"
-            style={styles.smallButton}
-            onPress={() => stageMutation.mutate([])}
-          >
-            <Text style={styles.smallButtonText}>Stage all</Text>
-          </Pressable>
-        </View>
-        {unstaged.length === 0 && untracked.length === 0 && (
-          <Text style={styles.muted}>Working tree clean.</Text>
-        )}
-        {unstaged.map((f) => renderFileRow(f, false, false))}
-        {untracked.map((f) => renderFileRow(f, false, true))}
-      </View>
-
-      {viewing && (
-        <View style={styles.card}>
-          <View style={styles.row}>
-            <Text style={styles.title} numberOfLines={1}>
-              {viewing.staged ? "Staged: " : "Diff: "}
-              {viewing.path}
-            </Text>
-            <View style={{ flex: 1 }} />
-            <Pressable
-              accessibilityRole="button"
-              style={styles.smallButton}
-              onPress={() => setViewing(null)}
-            >
-              <Text style={styles.smallButtonText}>Close</Text>
-            </Pressable>
-          </View>
-
-          {viewingConflict ? (
-            <Text style={styles.warning}>
-              Resolve with Ours / Theirs above, or edit the file and choose Mark.
-            </Text>
-          ) : null}
-
-          {viewingConflict ? (
-            conflictSidesQuery.isLoading ? (
-              <Text style={styles.muted}>Loading…</Text>
-            ) : conflictSidesQuery.data?.error ? (
-              <Text style={styles.error}>{conflictSidesQuery.data.error}</Text>
-            ) : (
-              <View>
-                <View style={{ flexDirection: compact ? "column" : "row", gap: 8 }}>
-                  {[
-                    { title: "Ours", text: conflictSidesQuery.data?.ours ?? "" },
-                    { title: "Theirs", text: conflictSidesQuery.data?.theirs ?? "" },
-                  ].map((side) => (
-                    <View key={side.title} style={{ flex: 1 }}>
-                      <Text style={styles.fileStatus}>{side.title}</Text>
-                      <ScrollView style={styles.diffBox} nestedScrollEnabled>
-                        <Text style={styles.diffText}>{side.text || "(empty)"}</Text>
-                      </ScrollView>
-                    </View>
-                  ))}
-                </View>
-                {conflictSidesQuery.data?.base != null && (
-                  <View>
-                    <Text style={styles.fileStatus}>Base</Text>
-                    <ScrollView style={styles.diffBox} nestedScrollEnabled>
-                      <Text style={styles.diffText}>
-                        {conflictSidesQuery.data.base || "(empty)"}
-                      </Text>
-                    </ScrollView>
-                  </View>
-                )}
-              </View>
-            )
-          ) : viewingUntracked ? (
-            diffQuery.isLoading ? (
-              <Text style={styles.muted}>Loading…</Text>
-            ) : diffQuery.data?.error ? (
-              <Text style={styles.error}>{diffQuery.data.error}</Text>
-            ) : (
-              <ScrollView style={styles.diffBox} nestedScrollEnabled>
-                <Text style={styles.diffText}>{diffQuery.data?.diff ?? ""}</Text>
-              </ScrollView>
-            )
-          ) : hunksQuery.isLoading ? (
-            <Text style={styles.muted}>Loading hunks…</Text>
-          ) : hunksQuery.data?.error ? (
-            <Text style={styles.error}>{hunksQuery.data.error}</Text>
-          ) : (hunksQuery.data?.hunks ?? []).length === 0 ? (
-            <Text style={styles.muted}>No hunks.</Text>
-          ) : (
-            hunksQuery.data?.hunks.map((patch, i) => (
-              <View key={`h-${i}`} style={styles.hunkBox}>
-                <View style={styles.row}>
-                  <Text style={styles.fileStatus} numberOfLines={1}>
-                    {hunkTitle(patch)}
-                  </Text>
-                  <View style={{ flex: 1 }} />
-                  <Pressable
-                    accessibilityRole="button"
-                    style={styles.smallButton}
-                    onPress={() => applyHunkMutation.mutate(patch)}
-                  >
-                    <Text style={styles.smallButtonText}>
-                      {viewing.staged ? "Unstage hunk" : "Stage hunk"}
-                    </Text>
-                  </Pressable>
-                </View>
-                <ScrollView style={styles.diffBox} nestedScrollEnabled>
-                  <Text style={styles.diffText}>{patch}</Text>
-                </ScrollView>
-              </View>
-            ))
-          )}
-
-          {applyHunkMutation.data?.error && (
-            <Text style={styles.error}>{applyHunkMutation.data.error}</Text>
-          )}
-        </View>
-      )}
-
       <View style={styles.card}>
         <Text style={styles.title}>Commit</Text>
-        <View style={styles.row}>
+        <View>
           <Text style={styles.muted}>Generator provider</Text>
-          <TextInput
-            style={[styles.input, { flex: 1 }]}
-            value={provider}
-            onChangeText={setProvider}
-            placeholder="claude/claude-sonnet-5-5"
-            placeholderTextColor={colors.foregroundMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+          <Pressable
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.select, pressed && { opacity: 0.6 }]}
+            onPress={() => setProviderPickerOpen(true)}
+          >
+            <Text style={styles.smallButtonText} numberOfLines={1}>
+              {providerLabel}
+            </Text>
+          </Pressable>
         </View>
         <Pressable
           accessibilityRole="button"
-          style={[styles.primaryButton, messageMutation.isPending ? styles.disabledButton : undefined]}
+          style={({ pressed }) => [
+            styles.primaryButton,
+            messageMutation.isPending ? styles.disabledButton : undefined,
+            pressed && { opacity: 0.7 },
+          ]}
           disabled={messageMutation.isPending}
           onPress={() => messageMutation.mutate()}
         >
@@ -612,7 +320,11 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
         )}
         <Pressable
           accessibilityRole="button"
-          style={[styles.primaryButton, !canCommit ? styles.disabledButton : undefined]}
+          style={({ pressed }) => [
+            styles.primaryButton,
+            !canCommit ? styles.disabledButton : undefined,
+            pressed && { opacity: 0.7 },
+          ]}
           disabled={!canCommit || commitMutation.isPending}
           onPress={() => commitMutation.mutate()}
         >
@@ -621,6 +333,158 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
           </Text>
         </Pressable>
       </View>
+
+      {data?.operation && (
+        <View style={styles.card}>
+          <View style={styles.row}>
+            <Text style={styles.warning}>
+              In progress: {OP_LABELS[data.operation] ?? data.operation}
+            </Text>
+            <View style={{ flex: 1 }} />
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.dangerButton, pressed && { opacity: 0.6 }]}
+              onPress={() => abortMutation.mutate()}
+            >
+              <Text style={styles.dangerButtonText}>
+                {abortMutation.isPending ? "Aborting…" : "Abort"}
+              </Text>
+            </Pressable>
+          </View>
+          {abortMutation.data?.error && (
+            <Text style={styles.error}>{abortMutation.data.error}</Text>
+          )}
+        </View>
+      )}
+
+      {conflicts.length > 0 && (
+        <View style={styles.card}>
+          <Text style={styles.warning}>Conflicts ({conflicts.length})</Text>
+          {conflicts.map((file) => (
+            <View key={`c-${file.path}`} style={styles.row}>
+              <Pressable
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.fileButton, pressed && { opacity: 0.6 }]}
+                onPress={() =>
+                  openFileTab({
+                    workspaceId,
+                    cwd,
+                    path: file.path,
+                    staged: false,
+                    kind: "conflict",
+                  })
+                }
+              >
+                <Text style={styles.fileName} numberOfLines={1}>
+                  {file.path}
+                </Text>
+                {renderBadge(file.status)}
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+                onPress={() => resolveMutation.mutate({ path: file.path, strategy: "ours" })}
+              >
+                <Text style={styles.smallButtonText}>Ours</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+                onPress={() => resolveMutation.mutate({ path: file.path, strategy: "theirs" })}
+              >
+                <Text style={styles.smallButtonText}>Theirs</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+                onPress={() => resolveMutation.mutate({ path: file.path, strategy: "mark" })}
+              >
+                <Text style={styles.smallButtonText}>Mark</Text>
+              </Pressable>
+            </View>
+          ))}
+          {resolveMutation.data?.error && (
+            <Text style={styles.error}>{resolveMutation.data.error}</Text>
+          )}
+        </View>
+      )}
+
+      {hasStaged && (
+        <View style={styles.card}>
+          <View style={styles.row}>
+            <Text style={styles.title}>Staged ({staged.length})</Text>
+            <View style={{ flex: 1 }} />
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+              onPress={() => unstageMutation.mutate([])}
+            >
+              <Text style={styles.smallButtonText}>Unstage all</Text>
+            </Pressable>
+          </View>
+          {staged.map((f) => renderFileRow(f, true, false))}
+        </View>
+      )}
+
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <Text style={styles.title}>Changes ({unstaged.length + untracked.length})</Text>
+          <View style={{ flex: 1 }} />
+          <Pressable
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+            onPress={() => stageMutation.mutate([])}
+          >
+            <Text style={styles.smallButtonText}>Stage all</Text>
+          </Pressable>
+        </View>
+        {unstaged.length === 0 && untracked.length === 0 && (
+          <Text style={styles.muted}>Working tree clean.</Text>
+        )}
+        {unstaged.map((f) => renderFileRow(f, false, false))}
+        {untracked.map((f) => renderFileRow(f, false, true))}
+      </View>
+
+      <Modal
+        open={providerPickerOpen}
+        onOpenChange={setProviderPickerOpen}
+        title="Select provider"
+      >
+        <Modal.Content>
+          <View style={{ gap: 4 }}>
+            {providersQuery.isLoading && <Text style={styles.muted}>Loading providers…</Text>}
+            {providersQuery.data?.error && (
+              <Text style={styles.error}>{providersQuery.data.error}</Text>
+            )}
+            {(providersQuery.data?.options ?? []).map((opt) => (
+              <Pressable
+                key={opt.value}
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.optionRow, pressed && { opacity: 0.6 }]}
+                onPress={() => {
+                  setProvider(opt.value);
+                  setProviderPickerOpen(false);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.fileName,
+                    effectiveProvider === opt.value ? { color: colors.accent } : undefined,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
+            {!providersQuery.isLoading &&
+              !providersQuery.data?.error &&
+              (providersQuery.data?.options ?? []).length === 0 && (
+                <Text style={styles.muted}>No providers found.</Text>
+              )}
+          </View>
+        </Modal.Content>
+      </Modal>
     </ScrollView>
   );
 }

@@ -15,6 +15,7 @@ import {
   gitDiscardRpc,
   gitHunksRpc,
   gitMessageRpc,
+  gitProvidersRpc,
   gitResolveRpc,
   gitStageRpc,
   gitStatusRpc,
@@ -355,6 +356,37 @@ export async function getConflictSides({
     theirs: theirs.code === 0 ? theirs.stdout : undefined,
     base: base.code === 0 ? base.stdout : undefined,
   };
+}
+
+export async function listProviders(
+  _input: RpcInput<typeof gitProvidersRpc>,
+  { paseo }: PluginHandlerContext,
+) {
+  try {
+    const snap = await paseo.providers.snapshot();
+    const options: { value: string; label: string }[] = [];
+    for (const entry of snap.entries ?? []) {
+      if (entry.enabled === false) continue;
+      if (entry.status === "unavailable") continue;
+      const providerLabel = entry.label ?? entry.provider;
+      for (const m of entry.models ?? []) {
+        options.push({
+          value: `${entry.provider}/${m.id}`,
+          label: `${providerLabel} · ${m.id}`,
+        });
+      }
+    }
+    if (options.length === 0) {
+      return { ok: false, options: [], error: "No enabled providers with models found." };
+    }
+    return { ok: true, options, default: options[0].value };
+  } catch (err) {
+    return {
+      ok: false,
+      options: [],
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 export async function commit({ cwd, message }: RpcInput<typeof gitCommitRpc>) {

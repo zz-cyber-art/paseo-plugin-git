@@ -1,7 +1,10 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { FileDiffPanel } from "./client/FileDiffPanel";
 import { GitPanel } from "./client/GitPanel";
+import { bindFileTabClient } from "./client/fileTab";
 
 export default function contribute(client: PluginClientContext) {
+  bindFileTabClient(client);
   client.addWorkspacePanel({
     id: "git-stage-commit",
     title: "Git",
@@ -9,5 +12,14 @@ export default function contribute(client: PluginClientContext) {
     context: "workspace",
     Component: GitPanel,
   });
-  return () => {};
+  client.addWorkspacePanel({
+    id: "git-file-diff",
+    title: "File diff",
+    icon: "FileDiff",
+    context: "workspace",
+    Component: FileDiffPanel,
+  });
+  return () => {
+    bindFileTabClient(null);
+  };
 }
