@@ -3,22 +3,27 @@ import {
   abortOperation,
   applyHunk,
   commit,
+  createBranch,
   discard,
   generateMessage,
   getConflictSides,
   getDiff,
   getHunks,
   getStatus,
+  listBranches,
   listProviders,
   resolveConflict,
   stage,
+  switchBranch,
   unstage,
 } from "./server/git";
 import {
   gitAbortRpc,
   gitApplyHunkRpc,
+  gitBranchesRpc,
   gitCommitRpc,
   gitConflictSidesRpc,
+  gitCreateBranchRpc,
   gitDiffRpc,
   gitDiscardRpc,
   gitHunksRpc,
@@ -27,6 +32,7 @@ import {
   gitResolveRpc,
   gitStageRpc,
   gitStatusRpc,
+  gitSwitchBranchRpc,
   gitUnstageRpc,
 } from "./shared/git";
 
@@ -42,6 +48,9 @@ export default function contribute(server: PluginServerContext) {
   server.handle(gitAbortRpc, abortOperation);
   server.handle(gitConflictSidesRpc, getConflictSides);
   server.handle(gitProvidersRpc, listProviders);
+  server.handle(gitBranchesRpc, listBranches);
+  server.handle(gitSwitchBranchRpc, switchBranch);
+  server.handle(gitCreateBranchRpc, createBranch);
   server.handle(gitCommitRpc, commit);
   server.handle(gitMessageRpc, generateMessage);
   return () => {};

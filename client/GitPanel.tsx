@@ -7,13 +7,16 @@ import { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import {
   gitAbortRpc,
+  gitBranchesRpc,
   gitCommitRpc,
+  gitCreateBranchRpc,
   gitDiscardRpc,
   gitMessageRpc,
   gitProvidersRpc,
   gitResolveRpc,
   gitStageRpc,
   gitStatusRpc,
+  gitSwitchBranchRpc,
   gitUnstageRpc,
   type FileChange,
 } from "../shared/git";
@@ -87,11 +90,16 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const messageRpc = useRpc(gitMessageRpc);
   const abortRpc = useRpc(gitAbortRpc);
   const providersRpc = useRpc(gitProvidersRpc);
+  const branchesRpc = useRpc(gitBranchesRpc);
+  const switchBranchRpc = useRpc(gitSwitchBranchRpc);
+  const createBranchRpc = useRpc(gitCreateBranchRpc);
   const queryClient = useQueryClient();
 
   const [message, setMessage] = useState("");
   const [provider, setProvider] = useState("");
   const [providerPickerOpen, setProviderPickerOpen] = useState(false);
+  const [branchPickerOpen, setBranchPickerOpen] = useState(false);
+  const [newBranchName, setNewBranchName] = useState("");
 
   const statusQuery = useQuery({
     queryKey: ["git.status", cwd],
@@ -104,6 +112,12 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
     queryKey: ["git.providers"],
     queryFn: () => providersRpc({}),
     staleTime: 5 * 60 * 1000,
+  });
+
+  const branchesQuery = useQuery({
+    queryKey: ["git.branches", cwd],
+    queryFn: () => branchesRpc({ cwd }),
+    enabled: isGit && cwd.length > 0 && branchPickerOpen,
   });
 
   const invalidateStatus = () =>
@@ -131,6 +145,29 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
     mutationFn: () => abortRpc({ cwd }),
     onSettled: invalidateStatus,
   });
+  const switchBranchMutation = useMutation({
+    mutationFn: (name: string) => switchBranchRpc({ cwd, name }),
+    onSuccess: (res) => {
+      if (res.ok) setBranchPickerOpen(false);
+    },
+    onSettled: () => {
+      invalidateStatus();
+      void queryClient.invalidateQueries({ queryKey: ["git.branches", cwd] });
+    },
+  });
+  const createBranchMutation = useMutation({
+    mutationFn: (name: string) => createBranchRpc({ cwd, name }),
+    onSuccess: (res) => {
+      if (res.ok) {
+        setNewBranchName("");
+        setBranchPickerOpen(false);
+      }
+    },
+    onSettled: () => {
+      invalidateStatus();
+      void queryClient.invalidateQueries({ queryKey: ["git.branches", cwd] });
+    },
+  });
   const commitMutation = useMutation({
     mutationFn: () => commitRpc({ cwd, message }),
     onSuccess: (res) => {
@@ -139,7 +176,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
     onSettled: invalidateStatus,
   });
   const messageMutation = useMutation({
-    mutationFn: () => messageRpc({ cwd, provider: effectiveProvider || undefined }),
+    mutationFn: () => messageRpc({ cwd, workspaceId, provider: effectiveProvider || undefined }),
     onSuccess: (res) => {
       if (res.ok && res.message) setMessage(res.message);
     },
@@ -161,7 +198,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
         alignSelf: "flex-start",
         backgroundColor: colors.surface2,
         borderRadius: 4,
-        paddingHorizontal: 6,
+        paddingHorizontal: 5,
         paddingVertical: 1,
       }}
     >
@@ -258,11 +295,24 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
 
       {data?.isRepo && (
         <View style={styles.card}>
-          <Text style={styles.title}>
-            {data.branch ? `Branch: ${data.branch}` : "Detached HEAD"}
-            {typeof data.ahead === "number" && data.ahead > 0 ? ` ↑${data.ahead}` : ""}
-            {typeof data.behind === "number" && data.behind > 0 ? ` ↓${data.behind}` : ""}
-          </Text>
+          <View style={styles.row}>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                { flexDirection: "row" as const, alignItems: "center" as const, gap: 6 },
+                pressed && { opacity: 0.6 },
+              ]}
+              onPress={() => setBranchPickerOpen(true)}
+            >
+              <Text style={styles.title}>{data.branch || "Detached HEAD"}</Text>
+              <Text style={styles.subtitle}>▾</Text>
+            </Pressable>
+            <View style={{ flex: 1 }} />
+            <Text style={styles.subtitle}>
+              {typeof data.ahead === "number" && data.ahead > 0 ? `↑${data.ahead}` : ""}
+              {typeof data.behind === "number" && data.behind > 0 ? ` ↓${data.behind}` : ""}
+            </Text>
+          </View>
           {data.lastCommit ? (
             <Text style={styles.subtitle} numberOfLines={1}>
               Last commit: {data.lastCommit}
@@ -305,7 +355,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
           <Text style={styles.error}>{messageMutation.data.error}</Text>
         )}
         <TextInput
-          style={[styles.input, { minHeight: compact ? 64 : 88, textAlignVertical: "top" }]}
+          style={[styles.input, { minHeight: compact ? 52 : 64, textAlignVertical: "top" }]}
           value={message}
           onChangeText={setMessage}
           placeholder="Commit message"
@@ -451,7 +501,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
         title="Select provider"
       >
         <Modal.Content>
-          <View style={{ gap: 4 }}>
+          <View style={{ gap: 2 }}>
             {providersQuery.isLoading && <Text style={styles.muted}>Loading providers…</Text>}
             {providersQuery.data?.error && (
               <Text style={styles.error}>{providersQuery.data.error}</Text>
@@ -482,6 +532,76 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
               (providersQuery.data?.options ?? []).length === 0 && (
                 <Text style={styles.muted}>No providers found.</Text>
               )}
+          </View>
+        </Modal.Content>
+      </Modal>
+
+      <Modal
+        open={branchPickerOpen}
+        onOpenChange={setBranchPickerOpen}
+        title="Switch branch"
+      >
+        <Modal.Content>
+          <View style={{ gap: 6 }}>
+            {branchesQuery.isLoading && <Text style={styles.muted}>Loading branches…</Text>}
+            {branchesQuery.data?.error && (
+              <Text style={styles.error}>{branchesQuery.data.error}</Text>
+            )}
+            {(branchesQuery.data?.branches ?? []).map((name) => {
+              const isCurrent = name === branchesQuery.data?.current;
+              return (
+                <Pressable
+                  key={name}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [styles.optionRow, pressed && { opacity: 0.6 }]}
+                  onPress={() => switchBranchMutation.mutate(name)}
+                >
+                  <Text
+                    style={[
+                      styles.fileName,
+                      isCurrent
+                        ? { color: colors.accent, fontWeight: "600" as const }
+                        : undefined,
+                    ]}
+                  >
+                    {name}
+                    {isCurrent ? "  (current)" : ""}
+                  </Text>
+                </Pressable>
+              );
+            })}
+            {switchBranchMutation.data?.error && (
+              <Text style={styles.error}>{switchBranchMutation.data.error}</Text>
+            )}
+
+            <View style={styles.row}>
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                value={newBranchName}
+                onChangeText={setNewBranchName}
+                placeholder="New branch name"
+                placeholderTextColor={colors.foregroundMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Pressable
+                accessibilityRole="button"
+                style={({ pressed }) => [
+                  styles.primaryButton,
+                  !newBranchName.trim() ? styles.disabledButton : undefined,
+                  pressed && { opacity: 0.7 },
+                ]}
+                disabled={!newBranchName.trim() || createBranchMutation.isPending}
+                onPress={() => createBranchMutation.mutate(newBranchName)}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {createBranchMutation.isPending ? "Creating…" : "Create"}
+                </Text>
+              </Pressable>
+            </View>
+            {createBranchMutation.data?.error && (
+              <Text style={styles.error}>{createBranchMutation.data.error}</Text>
+            )}
           </View>
         </Modal.Content>
       </Modal>

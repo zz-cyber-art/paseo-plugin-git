@@ -9,8 +9,10 @@ import {
   type FileChange,
   gitAbortRpc,
   gitApplyHunkRpc,
+  gitBranchesRpc,
   gitCommitRpc,
   gitConflictSidesRpc,
+  gitCreateBranchRpc,
   gitDiffRpc,
   gitDiscardRpc,
   gitHunksRpc,
@@ -19,6 +21,7 @@ import {
   gitResolveRpc,
   gitStageRpc,
   gitStatusRpc,
+  gitSwitchBranchRpc,
   gitUnstageRpc,
 } from "../shared/git";
 
@@ -389,6 +392,44 @@ export async function listProviders(
   }
 }
 
+const BRANCH_NAME_RE = /^[A-Za-z0-9._/-]+$/;
+
+export async function listBranches({ cwd }: RpcInput<typeof gitBranchesRpc>) {
+  const current = await runGit(cwd, ["branch", "--show-current"]);
+  const list = await runGit(cwd, ["branch", "--format=%(refname:short)"]);
+  const branches = list.stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return { ok: true, current: current.stdout.trim() || undefined, branches };
+}
+
+export async function switchBranch({
+  cwd,
+  name,
+}: RpcInput<typeof gitSwitchBranchRpc>) {
+  const { code, stderr } = await runGit(cwd, ["switch", name]);
+  if (code !== 0) return { ok: false, error: stderr.trim() || "git switch failed" };
+  return { ok: true };
+}
+
+export async function createBranch({
+  cwd,
+  name,
+}: RpcInput<typeof gitCreateBranchRpc>) {
+  const trimmed = name.trim();
+  if (!trimmed) return { ok: false, error: "Branch name is empty" };
+  if (!BRANCH_NAME_RE.test(trimmed)) {
+    return {
+      ok: false,
+      error: "Branch name may only contain letters, numbers, . _ - and /.",
+    };
+  }
+  const { code, stderr } = await runGit(cwd, ["switch", "-c", trimmed]);
+  if (code !== 0) return { ok: false, error: stderr.trim() || "git switch -c failed" };
+  return { ok: true };
+}
+
 export async function commit({ cwd, message }: RpcInput<typeof gitCommitRpc>) {
   if (!message.trim()) return { ok: false, error: "Commit message is empty" };
   const { code, stderr } = await runGit(cwd, ["commit", "-m", message]);
@@ -411,7 +452,7 @@ function cleanMessage(text: string): string {
 }
 
 export async function generateMessage(
-  { cwd, provider }: RpcInput<typeof gitMessageRpc>,
+  { cwd, workspaceId, provider }: RpcInput<typeof gitMessageRpc>,
   { paseo }: PluginHandlerContext,
 ) {
   const stagedDiff = await runGit(cwd, ["diff", "--cached"]);
@@ -456,12 +497,12 @@ export async function generateMessage(
   ].join("\n");
 
   const providerValue = (provider ?? "").trim() || "claude/claude-sonnet-5-5";
-  const agent = await paseo.agents.create({
+  // Reuse the current workspace instead of creating a fresh one per request.
+  const agent = await paseo.workspaces.ref(workspaceId).agents.create({
     config: { provider: providerValue },
-    cwd,
-    autoArchive: true,
     title: "Commit message",
     prompt,
+    autoArchive: true,
   });
 
   const result = await agent.waitForFinish(180_000);

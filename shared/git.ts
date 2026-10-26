@@ -62,7 +62,11 @@ export const gitCommitRpc = defineRpc({
 
 export const gitMessageRpc = defineRpc({
   name: "git.message",
-  input: z.object({ cwd: z.string(), provider: z.string().optional() }),
+  input: z.object({
+    cwd: z.string(),
+    workspaceId: z.string(),
+    provider: z.string().optional(),
+  }),
   output: z.object({
     ok: z.boolean(),
     message: z.string().optional(),
@@ -141,4 +145,27 @@ export const gitProvidersRpc = defineRpc({
     default: z.string().optional(),
     error: z.string().optional(),
   }),
+});
+
+export const gitBranchesRpc = defineRpc({
+  name: "git.branches",
+  input: z.object({ cwd: z.string() }),
+  output: z.object({
+    ok: z.boolean(),
+    current: z.string().optional(),
+    branches: z.array(z.string()),
+    error: z.string().optional(),
+  }),
+});
+
+export const gitSwitchBranchRpc = defineRpc({
+  name: "git.switch-branch",
+  input: z.object({ cwd: z.string(), name: z.string() }),
+  output: z.object({ ok: z.boolean(), error: z.string().optional() }),
+});
+
+export const gitCreateBranchRpc = defineRpc({
+  name: "git.create-branch",
+  input: z.object({ cwd: z.string(), name: z.string() }),
+  output: z.object({ ok: z.boolean(), error: z.string().optional() }),
 });

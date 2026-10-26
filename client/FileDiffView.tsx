@@ -120,8 +120,8 @@ export function FileDiffView({
         ) : sidesQuery.data?.error ? (
           <Text style={styles.error}>{sidesQuery.data.error}</Text>
         ) : (
-          <ScrollView contentContainerStyle={{ gap: 8 }}>
-            <View style={{ flexDirection: compact ? "column" : "row", gap: 8 }}>
+          <ScrollView contentContainerStyle={{ gap: 6 }}>
+            <View style={{ flexDirection: compact ? "column" : "row", gap: 6 }}>
               {[
                 { title: "Ours", text: sidesQuery.data?.ours ?? "" },
                 { title: "Theirs", text: sidesQuery.data?.theirs ?? "" },
@@ -132,7 +132,7 @@ export function FileDiffView({
                     <DiffText
                       text={side.text || "(empty)"}
                       colors={colors}
-                      fontSize={compact ? 10 : 11}
+                      fontSize={compact ? 9 : 10}
                       colored={false}
                     />
                   </ScrollView>
@@ -146,7 +146,7 @@ export function FileDiffView({
                   <DiffText
                     text={sidesQuery.data.base || "(empty)"}
                     colors={colors}
-                    fontSize={compact ? 10 : 11}
+                    fontSize={compact ? 9 : 10}
                     colored={false}
                   />
                 </ScrollView>
@@ -164,7 +164,7 @@ export function FileDiffView({
             <DiffText
               text={diffQuery.data?.diff ?? ""}
               colors={colors}
-              fontSize={compact ? 10 : 11}
+              fontSize={compact ? 9 : 10}
               colored={false}
             />
           </ScrollView>
@@ -176,7 +176,7 @@ export function FileDiffView({
       ) : (hunksQuery.data?.hunks ?? []).length === 0 ? (
         <Text style={styles.muted}>No hunks.</Text>
       ) : (
-        <ScrollView contentContainerStyle={{ gap: 8 }}>
+        <ScrollView contentContainerStyle={{ gap: 6 }}>
           {hunksQuery.data?.hunks.map((patch, i) => (
             <View key={`h-${i}`} style={styles.hunkBox}>
               <View style={styles.row}>
@@ -198,7 +198,7 @@ export function FileDiffView({
                 <DiffText
                   text={patch}
                   colors={colors}
-                  fontSize={compact ? 10 : 11}
+                  fontSize={compact ? 9 : 10}
                 />
               </ScrollView>
             </View>
