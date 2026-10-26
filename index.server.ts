@@ -12,6 +12,7 @@ import {
   getStatus,
   listBranches,
   listProviders,
+  pushBranch,
   resolveConflict,
   stage,
   switchBranch,
@@ -29,14 +30,17 @@ import {
   gitHunksRpc,
   gitMessageRpc,
   gitProvidersRpc,
+  gitPushRpc,
   gitResolveRpc,
   gitStageRpc,
   gitStatusRpc,
   gitSwitchBranchRpc,
   gitUnstageRpc,
 } from "./shared/git";
+import { gitSettings } from "./shared/settings";
 
 export default function contribute(server: PluginServerContext) {
+  server.registerSettings(gitSettings);
   server.handle(gitStatusRpc, getStatus);
   server.handle(gitStageRpc, stage);
   server.handle(gitUnstageRpc, unstage);
@@ -51,6 +55,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(gitBranchesRpc, listBranches);
   server.handle(gitSwitchBranchRpc, switchBranch);
   server.handle(gitCreateBranchRpc, createBranch);
+  server.handle(gitPushRpc, pushBranch);
   server.handle(gitCommitRpc, commit);
   server.handle(gitMessageRpc, generateMessage);
   return () => {};

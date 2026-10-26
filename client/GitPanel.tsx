@@ -1,6 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
-import { useRpc, useWorkspace } from "@getpaseo/plugin/client";
+import { useRpc, useSettings, useWorkspace } from "@getpaseo/plugin/client";
 import { Modal } from "@getpaseo/plugin/client/react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -13,6 +13,7 @@ import {
   gitDiscardRpc,
   gitMessageRpc,
   gitProvidersRpc,
+  gitPushRpc,
   gitResolveRpc,
   gitStageRpc,
   gitStatusRpc,
@@ -21,6 +22,7 @@ import {
   type FileChange,
 } from "../shared/git";
 import { openFileTab } from "./fileTab";
+import { gitSettings } from "../shared/settings";
 import { makeStyles } from "./styles";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -93,13 +95,14 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const branchesRpc = useRpc(gitBranchesRpc);
   const switchBranchRpc = useRpc(gitSwitchBranchRpc);
   const createBranchRpc = useRpc(gitCreateBranchRpc);
+  const pushRpc = useRpc(gitPushRpc);
   const queryClient = useQueryClient();
 
   const [message, setMessage] = useState("");
-  const [provider, setProvider] = useState("");
   const [providerPickerOpen, setProviderPickerOpen] = useState(false);
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
+  const settings = useSettings(gitSettings);
 
   const statusQuery = useQuery({
     queryKey: ["git.status", cwd],
@@ -168,6 +171,10 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
       void queryClient.invalidateQueries({ queryKey: ["git.branches", cwd] });
     },
   });
+  const pushMutation = useMutation({
+    mutationFn: () => pushRpc({ cwd }),
+    onSettled: invalidateStatus,
+  });
   const commitMutation = useMutation({
     mutationFn: () => commitRpc({ cwd, message }),
     onSuccess: (res) => {
@@ -186,7 +193,9 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
 
   const data = statusQuery.data;
 
-  const effectiveProvider = provider || providersQuery.data?.default || "";
+  const settingsProvider =
+    settings.status === "ready" ? settings.values.provider : undefined;
+  const effectiveProvider = settingsProvider || providersQuery.data?.default || "";
   const providerLabel =
     providersQuery.data?.options.find((o) => o.value === effectiveProvider)?.label ??
     effectiveProvider ??
@@ -312,7 +321,24 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
               {typeof data.ahead === "number" && data.ahead > 0 ? `↑${data.ahead}` : ""}
               {typeof data.behind === "number" && data.behind > 0 ? ` ↓${data.behind}` : ""}
             </Text>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.primaryButton,
+                { paddingHorizontal: 10, paddingVertical: 4 },
+                pressed && { opacity: 0.7 },
+              ]}
+              onPress={() => pushMutation.mutate()}
+              disabled={pushMutation.isPending}
+            >
+              <Text style={styles.primaryButtonText}>
+                {pushMutation.isPending ? "Pushing…" : "Push"}
+              </Text>
+            </Pressable>
           </View>
+          {pushMutation.data?.error && (
+            <Text style={styles.error}>{pushMutation.data.error}</Text>
+          )}
           {data.lastCommit ? (
             <Text style={styles.subtitle} numberOfLines={1}>
               Last commit: {data.lastCommit}
@@ -512,7 +538,9 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
                 accessibilityRole="button"
                 style={({ pressed }) => [styles.optionRow, pressed && { opacity: 0.6 }]}
                 onPress={() => {
-                  setProvider(opt.value);
+                  if (settings.status === "ready") {
+                    void settings.save({ provider: opt.value }, settings.revision);
+                  }
                   setProviderPickerOpen(false);
                 }}
               >

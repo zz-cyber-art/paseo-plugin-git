@@ -18,6 +18,7 @@ import {
   gitHunksRpc,
   gitMessageRpc,
   gitProvidersRpc,
+  gitPushRpc,
   gitResolveRpc,
   gitStageRpc,
   gitStatusRpc,
@@ -430,6 +431,20 @@ export async function createBranch({
   return { ok: true };
 }
 
+export async function pushBranch({ cwd }: RpcInput<typeof gitPushRpc>) {
+  const branch = await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  if (branch.code !== 0 || !branch.stdout.trim()) {
+    return { ok: false, error: "Cannot determine the current branch" };
+  }
+  const bname = branch.stdout.trim();
+  const upstream = await runGit(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]);
+  const args =
+    upstream.code === 0 ? ["push"] : ["push", "--set-upstream", "origin", bname];
+  const { code, stderr } = await runGit(cwd, args);
+  if (code !== 0) return { ok: false, error: stderr.trim() || "git push failed" };
+  return { ok: true };
+}
+
 export async function commit({ cwd, message }: RpcInput<typeof gitCommitRpc>) {
   if (!message.trim()) return { ok: false, error: "Commit message is empty" };
   const { code, stderr } = await runGit(cwd, ["commit", "-m", message]);
@@ -457,6 +472,7 @@ export async function generateMessage(
 ) {
   const stagedDiff = await runGit(cwd, ["diff", "--cached"]);
   const stagedStat = await runGit(cwd, ["diff", "--cached", "--stat"]);
+  const stagedNames = await runGit(cwd, ["diff", "--cached", "--name-status"]);
   const unstagedDiff = await runGit(cwd, ["diff"]);
   const untracked = await runGit(cwd, ["ls-files", "--others", "--exclude-standard"]);
 
@@ -470,14 +486,20 @@ export async function generateMessage(
   }
 
   const summaryParts: string[] = [];
+  if (stagedNames.stdout.trim()) {
+    summaryParts.push(`Changed files:\n${stagedNames.stdout.trim()}`);
+  }
   if (stagedStat.stdout.trim()) summaryParts.push(stagedStat.stdout.trim());
   if (!stagedDiff.stdout.trim() && unstagedDiff.stdout.trim()) {
     summaryParts.push("(unstaged working-tree changes)");
   }
   if (untracked.stdout.trim()) {
-    const names = untracked.stdout.trim().split("\n").slice(0, 40);
+    const names = untracked.stdout.trim().split("\n").slice(0, 100);
     summaryParts.push(`Untracked files:\n${names.join("\n")}`);
   }
+
+  const diffCapped = diff.slice(0, 32000);
+  const diffTruncated = diff.length > diffCapped.length;
 
   const prompt = [
     "Generate a git commit message for the change described below.",
@@ -486,14 +508,19 @@ export async function generateMessage(
     "- Conventional Commit format: <type>(<scope>): <subject>",
     "- type: feat | fix | refactor | perf | docs | test | chore | style | build | ci | revert",
     "- Subject uses imperative mood, at most 72 characters, no trailing period.",
-    "- You may add a short body below a blank line only when the change is non-trivial.",
+    "- Always add a body when the change set has more than one file or one concern;",
+    "  use one bullet per concern, wrapped at 72 characters.",
+    "- Cover EVERY change listed in the summary, even if the diff below is truncated.",
     "- Output ONLY the commit message. No code fences, no explanations, no markdown.",
     "",
     "Changes summary:",
-    summaryParts.join("\n\n").slice(0, 4000),
+    summaryParts.join("\n\n").slice(0, 8000),
     "",
     "Diff:",
-    diff.slice(0, 12000),
+    diffCapped,
+    diffTruncated
+      ? "\n[Diff truncated; rely on the Changed files list above to cover all changes.]"
+      : "",
   ].join("\n");
 
   const providerValue = (provider ?? "").trim() || "claude/claude-sonnet-5-5";
@@ -507,6 +534,9 @@ export async function generateMessage(
 
   const result = await agent.waitForFinish(180_000);
   const text = result.lastMessage ?? "";
+  console.log(
+    `[git.message] status=${result.status} raw=${text.length} chars err=${result.error ?? "-"}`,
+  );
   const message = cleanMessage(text);
   if (!message) {
     return {

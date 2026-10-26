@@ -169,3 +169,9 @@ export const gitCreateBranchRpc = defineRpc({
   input: z.object({ cwd: z.string(), name: z.string() }),
   output: z.object({ ok: z.boolean(), error: z.string().optional() }),
 });
+
+export const gitPushRpc = defineRpc({
+  name: "git.push",
+  input: z.object({ cwd: z.string() }),
+  output: z.object({ ok: z.boolean(), error: z.string().optional() }),
+});
