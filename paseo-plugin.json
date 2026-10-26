@@ -1,0 +1,6 @@
+{
+  "id": "git-stage-commit",
+  "requirements": {
+    "paseo": ">=0.10.3"
+  }
+}
