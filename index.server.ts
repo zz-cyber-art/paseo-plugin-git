@@ -12,9 +12,13 @@ import {
   getStatus,
   listBranches,
   listProviders,
+  pullBranch,
   pushBranch,
   resolveConflict,
   stage,
+  stash,
+  stashList,
+  stashPop,
   switchBranch,
   unstage,
 } from "./server/git";
@@ -30,9 +34,13 @@ import {
   gitHunksRpc,
   gitMessageRpc,
   gitProvidersRpc,
+  gitPullRpc,
   gitPushRpc,
   gitResolveRpc,
   gitStageRpc,
+  gitStashListRpc,
+  gitStashPopRpc,
+  gitStashRpc,
   gitStatusRpc,
   gitSwitchBranchRpc,
   gitUnstageRpc,
@@ -56,6 +64,10 @@ export default function contribute(server: PluginServerContext) {
   server.handle(gitSwitchBranchRpc, switchBranch);
   server.handle(gitCreateBranchRpc, createBranch);
   server.handle(gitPushRpc, pushBranch);
+  server.handle(gitPullRpc, pullBranch);
+  server.handle(gitStashRpc, stash);
+  server.handle(gitStashPopRpc, stashPop);
+  server.handle(gitStashListRpc, stashList);
   server.handle(gitCommitRpc, commit);
   server.handle(gitMessageRpc, generateMessage);
   return () => {};

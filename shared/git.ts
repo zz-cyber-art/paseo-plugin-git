@@ -175,3 +175,27 @@ export const gitPushRpc = defineRpc({
   input: z.object({ cwd: z.string() }),
   output: z.object({ ok: z.boolean(), error: z.string().optional() }),
 });
+
+export const gitPullRpc = defineRpc({
+  name: "git.pull",
+  input: z.object({ cwd: z.string() }),
+  output: z.object({ ok: z.boolean(), error: z.string().optional() }),
+});
+
+export const gitStashRpc = defineRpc({
+  name: "git.stash",
+  input: z.object({ cwd: z.string() }),
+  output: z.object({ ok: z.boolean(), error: z.string().optional() }),
+});
+
+export const gitStashPopRpc = defineRpc({
+  name: "git.stash-pop",
+  input: z.object({ cwd: z.string() }),
+  output: z.object({ ok: z.boolean(), error: z.string().optional() }),
+});
+
+export const gitStashListRpc = defineRpc({
+  name: "git.stash-list",
+  input: z.object({ cwd: z.string() }),
+  output: z.object({ ok: z.boolean(), count: z.number(), error: z.string().optional() }),
+});

@@ -13,9 +13,13 @@ import {
   gitDiscardRpc,
   gitMessageRpc,
   gitProvidersRpc,
+  gitPullRpc,
   gitPushRpc,
   gitResolveRpc,
   gitStageRpc,
+  gitStashListRpc,
+  gitStashPopRpc,
+  gitStashRpc,
   gitStatusRpc,
   gitSwitchBranchRpc,
   gitUnstageRpc,
@@ -96,6 +100,10 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const switchBranchRpc = useRpc(gitSwitchBranchRpc);
   const createBranchRpc = useRpc(gitCreateBranchRpc);
   const pushRpc = useRpc(gitPushRpc);
+  const pullRpc = useRpc(gitPullRpc);
+  const stashRpc = useRpc(gitStashRpc);
+  const stashPopRpc = useRpc(gitStashPopRpc);
+  const stashListRpc = useRpc(gitStashListRpc);
   const queryClient = useQueryClient();
 
   const [message, setMessage] = useState("");
@@ -109,6 +117,13 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
     queryFn: () => statusRpc({ cwd }),
     enabled: isGit && cwd.length > 0,
     refetchInterval: 5000,
+  });
+
+  const stashListQuery = useQuery({
+    queryKey: ["git.stash-list", cwd],
+    queryFn: () => stashListRpc({ cwd }),
+    enabled: isGit && cwd.length > 0,
+    refetchInterval: 15000,
   });
 
   const providersQuery = useQuery({
@@ -174,6 +189,24 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const pushMutation = useMutation({
     mutationFn: () => pushRpc({ cwd }),
     onSettled: invalidateStatus,
+  });
+  const pullMutation = useMutation({
+    mutationFn: () => pullRpc({ cwd }),
+    onSettled: invalidateStatus,
+  });
+  const stashMutation = useMutation({
+    mutationFn: () => stashRpc({ cwd }),
+    onSettled: () => {
+      invalidateStatus();
+      void queryClient.invalidateQueries({ queryKey: ["git.stash-list", cwd] });
+    },
+  });
+  const stashPopMutation = useMutation({
+    mutationFn: () => stashPopRpc({ cwd }),
+    onSettled: () => {
+      invalidateStatus();
+      void queryClient.invalidateQueries({ queryKey: ["git.stash-list", cwd] });
+    },
   });
   const commitMutation = useMutation({
     mutationFn: () => commitRpc({ cwd, message }),
@@ -335,9 +368,25 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
                 {pushMutation.isPending ? "Pushing…" : "Push"}
               </Text>
             </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.smallButton,
+                pressed && { opacity: 0.6 },
+              ]}
+              onPress={() => pullMutation.mutate()}
+              disabled={pullMutation.isPending}
+            >
+              <Text style={styles.smallButtonText}>
+                {pullMutation.isPending ? "Pulling…" : "Pull"}
+              </Text>
+            </Pressable>
           </View>
           {pushMutation.data?.error && (
             <Text style={styles.error}>{pushMutation.data.error}</Text>
+          )}
+          {pullMutation.data?.error && (
+            <Text style={styles.error}>{pullMutation.data.error}</Text>
           )}
           {data.lastCommit ? (
             <Text style={styles.subtitle} numberOfLines={1}>
@@ -513,7 +562,35 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
           >
             <Text style={styles.smallButtonText}>Stage all</Text>
           </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+            onPress={() => stashMutation.mutate()}
+            disabled={stashMutation.isPending || (unstaged.length === 0 && untracked.length === 0)}
+          >
+            <Text style={styles.smallButtonText}>
+              {stashMutation.isPending ? "Stashing…" : "Stash"}
+            </Text>
+          </Pressable>
+          {(stashListQuery.data?.count ?? 0) > 0 && (
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+              onPress={() => stashPopMutation.mutate()}
+              disabled={stashPopMutation.isPending}
+            >
+              <Text style={styles.smallButtonText}>
+                {stashPopMutation.isPending ? "Popping…" : `Pop stash (${stashListQuery.data?.count})`}
+              </Text>
+            </Pressable>
+          )}
         </View>
+        {stashMutation.data?.error && (
+          <Text style={styles.error}>{stashMutation.data.error}</Text>
+        )}
+        {stashPopMutation.data?.error && (
+          <Text style={styles.error}>{stashPopMutation.data.error}</Text>
+        )}
         {unstaged.length === 0 && untracked.length === 0 && (
           <Text style={styles.muted}>Working tree clean.</Text>
         )}

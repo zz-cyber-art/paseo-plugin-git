@@ -18,9 +18,13 @@ import {
   gitHunksRpc,
   gitMessageRpc,
   gitProvidersRpc,
+  gitPullRpc,
   gitPushRpc,
   gitResolveRpc,
   gitStageRpc,
+  gitStashListRpc,
+  gitStashPopRpc,
+  gitStashRpc,
   gitStatusRpc,
   gitSwitchBranchRpc,
   gitUnstageRpc,
@@ -443,6 +447,36 @@ export async function pushBranch({ cwd }: RpcInput<typeof gitPushRpc>) {
   const { code, stderr } = await runGit(cwd, args);
   if (code !== 0) return { ok: false, error: stderr.trim() || "git push failed" };
   return { ok: true };
+}
+
+export async function pullBranch({ cwd }: RpcInput<typeof gitPullRpc>) {
+  const { code, stderr } = await runGit(cwd, ["pull"]);
+  if (code !== 0) return { ok: false, error: stderr.trim() || "git pull failed" };
+  return { ok: true };
+}
+
+export async function stash({ cwd }: RpcInput<typeof gitStashRpc>) {
+  const { code, stderr } = await runGit(cwd, ["stash", "push"]);
+  if (code !== 0) return { ok: false, error: stderr.trim() || "git stash failed" };
+  return { ok: true };
+}
+
+export async function stashPop({ cwd }: RpcInput<typeof gitStashPopRpc>) {
+  const { code, stderr } = await runGit(cwd, ["stash", "pop"]);
+  if (code !== 0) return { ok: false, error: stderr.trim() || "git stash pop failed" };
+  return { ok: true };
+}
+
+export async function stashList({ cwd }: RpcInput<typeof gitStashListRpc>) {
+  const { code, stdout, stderr } = await runGit(cwd, ["stash", "list"]);
+  if (code !== 0) {
+    if (stderr.includes("No stash") || (!stdout.trim() && !stderr.trim())) {
+      return { ok: true, count: 0 };
+    }
+    return { ok: false, count: 0, error: stderr.trim() || "git stash list failed" };
+  }
+  const lines = stdout.trim().split("\n").filter(Boolean);
+  return { ok: true, count: lines.length };
 }
 
 export async function commit({ cwd, message }: RpcInput<typeof gitCommitRpc>) {
