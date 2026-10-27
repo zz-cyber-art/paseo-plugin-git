@@ -270,9 +270,54 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const conflicts = data?.conflicts ?? [];
   const hasStaged = staged.length > 0;
   const canCommit = hasStaged && message.trim().length > 0;
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
 
-  const renderFileRow = (file: FileChange, isStaged: boolean, isUntracked: boolean) => (
-    <View key={`${isStaged ? "s" : "u"}-${file.path}`} style={styles.row}>
+  const toggleDir = (path: string) =>
+    setExpandedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+
+  const basename = (path: string) => {
+    const i = path.lastIndexOf("/");
+    return i >= 0 ? path.slice(i + 1) : path;
+  };
+
+  interface FileEntry { kind: "file"; file: FileChange }
+  interface DirEntry { kind: "dir"; name: string; path: string; count: number; children: (DirEntry | FileEntry)[] }
+  function buildTree(files: FileChange[]): DirEntry {
+    const root: DirEntry = { kind: "dir", name: "", path: "", count: files.length, children: [] };
+    for (const f of files) {
+      const parts = f.path.split("/");
+      let dir = root;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const name = parts[i];
+        let child = dir.children.find((c): c is DirEntry => c.kind === "dir" && c.name === name);
+        if (!child) {
+          child = { kind: "dir", name, path: parts.slice(0, i + 1).join("/"), count: 0, children: [] };
+          dir.children.push(child);
+        }
+        child.count++;
+        dir = child;
+      }
+      dir.children.push({ kind: "file", file: f });
+    }
+    return root;
+  }
+
+  function collectFiles(node: DirEntry): FileChange[] {
+    const out: FileChange[] = [];
+    for (const c of node.children) {
+      if (c.kind === "file") out.push(c.file);
+      else out.push(...collectFiles(c));
+    }
+    return out;
+  }
+
+  const renderFileRow = (file: FileChange, isStaged: boolean, isUntracked: boolean, indent = 0) => (
+    <View key={`${isStaged ? "s" : "u"}-${file.path}`} style={[styles.row, { paddingLeft: indent * 14 }]}>
       <Pressable
         accessibilityRole="button"
         style={({ pressed }) => [styles.fileButton, pressed && { opacity: 0.6 }]}
@@ -287,7 +332,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
         }
       >
         <Text style={styles.fileName} numberOfLines={1}>
-          {file.path}
+          {basename(file.path)}
         </Text>
         {renderBadge(file.status)}
       </Pressable>
@@ -322,6 +367,62 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
       )}
     </View>
   );
+
+  function renderDir(dir: DirEntry, isStaged: boolean, indent: number) {
+    const isExpanded = expandedDirs.has(dir.path);
+    const paths = collectFiles(dir).map((f) => f.path);
+    return (
+      <View key={`dir-${dir.path}`}>
+        <View style={[styles.row, { paddingLeft: indent * 14 }]}>
+          <Pressable
+            accessibilityRole="button"
+            style={({ pressed }) => [
+              styles.fileButton,
+              { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
+              pressed && { opacity: 0.6 },
+            ]}
+            onPress={() => toggleDir(dir.path)}
+          >
+            <Text style={styles.fileName}>{isExpanded ? "▾" : "▸"}</Text>
+            <Text style={styles.fileName} numberOfLines={1}>
+              {dir.name}/
+            </Text>
+            <Text style={styles.fileStatus}>{dir.count}</Text>
+          </Pressable>
+          {isStaged ? (
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+              onPress={() => unstageMutation.mutate(paths)}
+            >
+              <Text style={styles.smallButtonText}>Unstage</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+              onPress={() => stageMutation.mutate(paths)}
+            >
+              <Text style={styles.smallButtonText}>Stage</Text>
+            </Pressable>
+          )}
+        </View>
+        {isExpanded && renderTree(dir, isStaged, indent + 1)}
+      </View>
+    );
+  }
+
+  function renderTree(node: DirEntry, isStaged: boolean, indent: number) {
+    return (
+      <>
+        {node.children.map((child) =>
+          child.kind === "file"
+            ? renderFileRow(child.file, isStaged, child.file.status === "?", indent)
+            : renderDir(child, isStaged, indent),
+        )}
+      </>
+    );
+  }
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ gap: styles.screen.gap }}>
@@ -547,7 +648,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
               <Text style={styles.smallButtonText}>Unstage all</Text>
             </Pressable>
           </View>
-          {staged.map((f) => renderFileRow(f, true, false))}
+          {renderTree(buildTree(staged), true, 0)}
         </View>
       )}
 
@@ -594,8 +695,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
         {unstaged.length === 0 && untracked.length === 0 && (
           <Text style={styles.muted}>Working tree clean.</Text>
         )}
-        {unstaged.map((f) => renderFileRow(f, false, false))}
-        {untracked.map((f) => renderFileRow(f, false, true))}
+        {renderTree(buildTree([...unstaged, ...untracked]), false, 0)}
       </View>
 
       <Modal
