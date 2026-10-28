@@ -113,6 +113,28 @@ export const gitDiscardRpc = defineRpc({
   output: z.object({ ok: z.boolean(), error: z.string().optional() }),
 });
 
+export const gitDeleteRpc = defineRpc({
+  name: "git.delete",
+  input: z.object({ cwd: z.string(), path: z.string(), tracked: z.boolean() }),
+  output: z.object({ ok: z.boolean(), error: z.string().optional() }),
+});
+
+export const gitRevertPathsRpc = defineRpc({
+  name: "git.revert-paths",
+  input: z.object({ cwd: z.string(), paths: z.array(z.string()) }),
+  output: z.object({ ok: z.boolean(), error: z.string().optional() }),
+});
+
+export const gitDeletePathsRpc = defineRpc({
+  name: "git.delete-paths",
+  input: z.object({
+    cwd: z.string(),
+    tracked: z.array(z.string()),
+    untracked: z.array(z.string()),
+  }),
+  output: z.object({ ok: z.boolean(), error: z.string().optional() }),
+});
+
 export const gitAbortRpc = defineRpc({
   name: "git.abort",
   input: z.object({ cwd: z.string() }),

@@ -13,6 +13,8 @@ import {
   gitCommitRpc,
   gitConflictSidesRpc,
   gitCreateBranchRpc,
+  gitDeletePathsRpc,
+  gitDeleteRpc,
   gitDiffRpc,
   gitDiscardRpc,
   gitHunksRpc,
@@ -21,6 +23,7 @@ import {
   gitPullRpc,
   gitPushRpc,
   gitResolveRpc,
+  gitRevertPathsRpc,
   gitStageRpc,
   gitStashListRpc,
   gitStashPopRpc,
@@ -331,6 +334,50 @@ export async function discard({ cwd, path, untracked }: RpcInput<typeof gitDisca
   }
   const { code, stderr } = await runGit(cwd, ["checkout", "--", path]);
   if (code !== 0) return { ok: false, error: stderr.trim() || "git checkout failed" };
+  return { ok: true };
+}
+
+export async function deleteFile({ cwd, path, tracked }: RpcInput<typeof gitDeleteRpc>) {
+  if (tracked) {
+    const { code, stderr } = await runGit(cwd, ["rm", "-f", "--", path]);
+    if (code !== 0) return { ok: false, error: stderr.trim() || "git rm failed" };
+    return { ok: true };
+  }
+  try {
+    const target = resolve(cwd, path);
+    if (!isInside(cwd, target)) return { ok: false, error: "Path escapes the repository" };
+    await rm(target, { force: true });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function revertPaths({ cwd, paths }: RpcInput<typeof gitRevertPathsRpc>) {
+  if (paths.length === 0) return { ok: true };
+  const { code, stderr } = await runGit(cwd, ["checkout", "--", ...paths]);
+  if (code !== 0) return { ok: false, error: stderr.trim() || "git checkout failed" };
+  return { ok: true };
+}
+
+export async function deletePaths({
+  cwd,
+  tracked,
+  untracked,
+}: RpcInput<typeof gitDeletePathsRpc>) {
+  for (const p of untracked) {
+    const target = resolve(cwd, p);
+    if (!isInside(cwd, target)) return { ok: false, error: `Path escapes the repository: ${p}` };
+    try {
+      await rm(target, { force: true });
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  if (tracked.length > 0) {
+    const { code, stderr } = await runGit(cwd, ["rm", "-f", "--", ...tracked]);
+    if (code !== 0) return { ok: false, error: stderr.trim() || "git rm failed" };
+  }
   return { ok: true };
 }
 

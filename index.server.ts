@@ -4,6 +4,8 @@ import {
   applyHunk,
   commit,
   createBranch,
+  deleteFile,
+  deletePaths,
   discard,
   generateMessage,
   getConflictSides,
@@ -15,6 +17,7 @@ import {
   pullBranch,
   pushBranch,
   resolveConflict,
+  revertPaths,
   stage,
   stash,
   stashList,
@@ -29,6 +32,8 @@ import {
   gitCommitRpc,
   gitConflictSidesRpc,
   gitCreateBranchRpc,
+  gitDeletePathsRpc,
+  gitDeleteRpc,
   gitDiffRpc,
   gitDiscardRpc,
   gitHunksRpc,
@@ -37,6 +42,7 @@ import {
   gitPullRpc,
   gitPushRpc,
   gitResolveRpc,
+  gitRevertPathsRpc,
   gitStageRpc,
   gitStashListRpc,
   gitStashPopRpc,
@@ -57,6 +63,9 @@ export default function contribute(server: PluginServerContext) {
   server.handle(gitApplyHunkRpc, applyHunk);
   server.handle(gitResolveRpc, resolveConflict);
   server.handle(gitDiscardRpc, discard);
+  server.handle(gitDeleteRpc, deleteFile);
+  server.handle(gitRevertPathsRpc, revertPaths);
+  server.handle(gitDeletePathsRpc, deletePaths);
   server.handle(gitAbortRpc, abortOperation);
   server.handle(gitConflictSidesRpc, getConflictSides);
   server.handle(gitProvidersRpc, listProviders);

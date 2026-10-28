@@ -10,12 +10,15 @@ import {
   gitBranchesRpc,
   gitCommitRpc,
   gitCreateBranchRpc,
+  gitDeletePathsRpc,
+  gitDeleteRpc,
   gitDiscardRpc,
   gitMessageRpc,
   gitProvidersRpc,
   gitPullRpc,
   gitPushRpc,
   gitResolveRpc,
+  gitRevertPathsRpc,
   gitStageRpc,
   gitStashListRpc,
   gitStashPopRpc,
@@ -91,6 +94,9 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const stageRpc = useRpc(gitStageRpc);
   const unstageRpc = useRpc(gitUnstageRpc);
   const discardRpc = useRpc(gitDiscardRpc);
+  const deleteRpc = useRpc(gitDeleteRpc);
+  const revertPathsRpc = useRpc(gitRevertPathsRpc);
+  const deletePathsRpc = useRpc(gitDeletePathsRpc);
   const resolveRpc = useRpc(gitResolveRpc);
   const commitRpc = useRpc(gitCommitRpc);
   const messageRpc = useRpc(gitMessageRpc);
@@ -154,6 +160,20 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const discardMutation = useMutation({
     mutationFn: (input: { path: string; untracked: boolean }) =>
       discardRpc({ cwd, path: input.path, untracked: input.untracked }),
+    onSettled: invalidateStatus,
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (input: { path: string; tracked: boolean }) =>
+      deleteRpc({ cwd, path: input.path, tracked: input.tracked }),
+    onSettled: invalidateStatus,
+  });
+  const revertPathsMutation = useMutation({
+    mutationFn: (paths: string[]) => revertPathsRpc({ cwd, paths }),
+    onSettled: invalidateStatus,
+  });
+  const deletePathsMutation = useMutation({
+    mutationFn: (input: { tracked: string[]; untracked: string[] }) =>
+      deletePathsRpc({ cwd, tracked: input.tracked, untracked: input.untracked }),
     onSettled: invalidateStatus,
   });
   const resolveMutation = useMutation({
@@ -358,13 +378,23 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
           >
             <Text style={styles.smallButtonText}>Stage</Text>
           </Pressable>
+          {!isUntracked && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Revert changes to ${file.path}`}
+              style={({ pressed }) => [styles.dangerButton, pressed && { opacity: 0.6 }]}
+              onPress={() => discardMutation.mutate({ path: file.path, untracked: false })}
+            >
+              <Text style={styles.dangerButtonText}>Revert</Text>
+            </Pressable>
+          )}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Discard changes to ${file.path}`}
+            accessibilityLabel={`Delete ${file.path}`}
             style={({ pressed }) => [styles.dangerButton, pressed && { opacity: 0.6 }]}
-            onPress={() => discardMutation.mutate({ path: file.path, untracked: isUntracked })}
+            onPress={() => deleteMutation.mutate({ path: file.path, tracked: !isUntracked })}
           >
-            <Text style={styles.dangerButtonText}>Discard</Text>
+            <Text style={styles.dangerButtonText}>Delete</Text>
           </Pressable>
         </>
       )}
@@ -373,7 +403,8 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
 
   function renderDir(dir: DirEntry, isStaged: boolean, indent: number, expanded: Set<string>) {
     const isExpanded = expanded.has(dir.path);
-    const paths = collectFiles(dir).map((f) => f.path);
+    const allFiles = collectFiles(dir);
+    const paths = allFiles.map((f) => f.path);
     const toggle = () => toggleDir(isStaged ? "staged" : "changes", dir.path);
     return (
       <View key={`dir-${dir.path}`}>
@@ -402,13 +433,38 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
               <Text style={styles.smallButtonText}>Unstage</Text>
             </Pressable>
           ) : (
-            <Pressable
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
-              onPress={() => stageMutation.mutate(paths)}
-            >
-              <Text style={styles.smallButtonText}>Stage</Text>
-            </Pressable>
+            <>
+              <Pressable
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+                onPress={() => stageMutation.mutate(paths)}
+              >
+                <Text style={styles.smallButtonText}>Stage</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+                onPress={() => {
+                  const tracked = allFiles.filter(f => f.status !== "?").map(f => f.path);
+                  if (tracked.length > 0) revertPathsMutation.mutate(tracked);
+                }}
+                disabled={revertPathsMutation.isPending}
+              >
+                <Text style={styles.smallButtonText}>Revert</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.dangerButton, pressed && { opacity: 0.6 }]}
+                onPress={() => {
+                  const tracked = allFiles.filter(f => f.status !== "?").map(f => f.path);
+                  const untracked = allFiles.filter(f => f.status === "?").map(f => f.path);
+                  if (tracked.length + untracked.length > 0) deletePathsMutation.mutate({ tracked, untracked });
+                }}
+                disabled={deletePathsMutation.isPending}
+              >
+                <Text style={styles.dangerButtonText}>Delete</Text>
+              </Pressable>
+            </>
           )}
         </View>
         {isExpanded && renderTree(dir, isStaged, indent + 1, expanded)}
