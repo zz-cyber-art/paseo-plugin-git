@@ -110,6 +110,8 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const [providerPickerOpen, setProviderPickerOpen] = useState(false);
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
+  const [stagedExpanded, setStagedExpanded] = useState<Set<string>>(new Set());
+  const [changesExpanded, setChangesExpanded] = useState<Set<string>>(new Set());
   const settings = useSettings(gitSettings);
 
   const statusQuery = useQuery({
@@ -270,15 +272,16 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const conflicts = data?.conflicts ?? [];
   const hasStaged = staged.length > 0;
   const canCommit = hasStaged && message.trim().length > 0;
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
 
-  const toggleDir = (path: string) =>
-    setExpandedDirs((prev) => {
+  const toggleDir = (setKey: "staged" | "changes", path: string) => {
+    const setFn = setKey === "staged" ? setStagedExpanded : setChangesExpanded;
+    setFn((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
       return next;
     });
+  };
 
   const basename = (path: string) => {
     const i = path.lastIndexOf("/");
@@ -368,9 +371,10 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
     </View>
   );
 
-  function renderDir(dir: DirEntry, isStaged: boolean, indent: number) {
-    const isExpanded = expandedDirs.has(dir.path);
+  function renderDir(dir: DirEntry, isStaged: boolean, indent: number, expanded: Set<string>) {
+    const isExpanded = expanded.has(dir.path);
     const paths = collectFiles(dir).map((f) => f.path);
+    const toggle = () => toggleDir(isStaged ? "staged" : "changes", dir.path);
     return (
       <View key={`dir-${dir.path}`}>
         <View style={[styles.row, { paddingLeft: indent * 14 }]}>
@@ -381,7 +385,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
               { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
               pressed && { opacity: 0.6 },
             ]}
-            onPress={() => toggleDir(dir.path)}
+            onPress={toggle}
           >
             <Text style={styles.fileName}>{isExpanded ? "▾" : "▸"}</Text>
             <Text style={styles.fileName} numberOfLines={1}>
@@ -407,18 +411,18 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
             </Pressable>
           )}
         </View>
-        {isExpanded && renderTree(dir, isStaged, indent + 1)}
+        {isExpanded && renderTree(dir, isStaged, indent + 1, expanded)}
       </View>
     );
   }
 
-  function renderTree(node: DirEntry, isStaged: boolean, indent: number) {
+  function renderTree(node: DirEntry, isStaged: boolean, indent: number, expanded: Set<string>) {
     return (
       <>
         {node.children.map((child) =>
           child.kind === "file"
             ? renderFileRow(child.file, isStaged, child.file.status === "?", indent)
-            : renderDir(child, isStaged, indent),
+            : renderDir(child, isStaged, indent, expanded),
         )}
       </>
     );
@@ -501,32 +505,31 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
 
       <View style={styles.card}>
         <Text style={styles.title}>Commit</Text>
-        <View>
-          <Text style={styles.muted}>Generator provider</Text>
+        <View style={styles.row}>
           <Pressable
             accessibilityRole="button"
-            style={({ pressed }) => [styles.select, pressed && { opacity: 0.6 }]}
+            style={({ pressed }) => [styles.select, { flex: 1 }, pressed && { opacity: 0.6 }]}
             onPress={() => setProviderPickerOpen(true)}
           >
             <Text style={styles.smallButtonText} numberOfLines={1}>
               {providerLabel}
             </Text>
           </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            style={({ pressed }) => [
+              styles.primaryButton,
+              messageMutation.isPending ? styles.disabledButton : undefined,
+              pressed && { opacity: 0.7 },
+            ]}
+            disabled={messageMutation.isPending}
+            onPress={() => messageMutation.mutate()}
+          >
+            <Text style={styles.primaryButtonText}>
+              {messageMutation.isPending ? "Generating…" : "Generate"}
+            </Text>
+          </Pressable>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          style={({ pressed }) => [
-            styles.primaryButton,
-            messageMutation.isPending ? styles.disabledButton : undefined,
-            pressed && { opacity: 0.7 },
-          ]}
-          disabled={messageMutation.isPending}
-          onPress={() => messageMutation.mutate()}
-        >
-          <Text style={styles.primaryButtonText}>
-            {messageMutation.isPending ? "Generating…" : "Generate commit message"}
-          </Text>
-        </Pressable>
         {messageMutation.data?.error && (
           <Text style={styles.error}>{messageMutation.data.error}</Text>
         )}
@@ -648,7 +651,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
               <Text style={styles.smallButtonText}>Unstage all</Text>
             </Pressable>
           </View>
-          {renderTree(buildTree(staged), true, 0)}
+          {renderTree(buildTree(staged), true, 0, stagedExpanded)}
         </View>
       )}
 
@@ -695,7 +698,7 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
         {unstaged.length === 0 && untracked.length === 0 && (
           <Text style={styles.muted}>Working tree clean.</Text>
         )}
-        {renderTree(buildTree([...unstaged, ...untracked]), false, 0)}
+        {renderTree(buildTree([...unstaged, ...untracked]), false, 0, changesExpanded)}
       </View>
 
       <Modal

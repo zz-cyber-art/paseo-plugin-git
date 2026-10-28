@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { RpcInput } from "@getpaseo/plugin";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
@@ -53,6 +53,12 @@ async function runGit(cwd: string, args: string[]): Promise<GitResult> {
       stderr: typeof e.stderr === "string" ? e.stderr : String(err),
     };
   }
+}
+
+function isInside(root: string, target: string): boolean {
+  const r = resolve(root);
+  const t = resolve(target);
+  return t === r || t.startsWith(r + sep);
 }
 
 function isUnmerged(x: string, y: string): boolean {
@@ -223,9 +229,7 @@ export async function getDiff({ cwd, path, staged }: RpcInput<typeof gitDiffRpc>
   if (others.stdout.trim()) {
     try {
       const target = resolve(cwd, path);
-      if (!target.startsWith(resolve(cwd))) {
-        return { ok: false, error: "Path escapes the repository" };
-      }
+      if (!isInside(cwd, target)) return { ok: false, error: "Path escapes the repository" };
       const content = await readFile(join(cwd, path), "utf8");
       const capped =
         content.length > 200_000 ? content.slice(0, 200_000) + "\n… (truncated)" : content;
@@ -318,7 +322,7 @@ export async function discard({ cwd, path, untracked }: RpcInput<typeof gitDisca
   if (untracked) {
     try {
       const target = resolve(cwd, path);
-      if (!target.startsWith(resolve(cwd))) return { ok: false, error: "Path escapes the repository" };
+      if (!isInside(cwd, target)) return { ok: false, error: "Path escapes the repository" };
       await rm(target, { force: true });
       return { ok: true };
     } catch (err) {
@@ -450,13 +454,25 @@ export async function pushBranch({ cwd }: RpcInput<typeof gitPushRpc>) {
 }
 
 export async function pullBranch({ cwd }: RpcInput<typeof gitPullRpc>) {
+  const upstream = await runGit(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]);
+  if (upstream.code !== 0) {
+    const branch = await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    const bname = branch.stdout.trim();
+    if (branch.code !== 0 || !bname) {
+      return { ok: false, error: "No upstream and cannot determine the current branch" };
+    }
+    const args = ["pull", "--set-upstream", "origin", bname];
+    const { code, stderr } = await runGit(cwd, args);
+    if (code !== 0) return { ok: false, error: stderr.trim() || "git pull failed" };
+    return { ok: true };
+  }
   const { code, stderr } = await runGit(cwd, ["pull"]);
   if (code !== 0) return { ok: false, error: stderr.trim() || "git pull failed" };
   return { ok: true };
 }
 
 export async function stash({ cwd }: RpcInput<typeof gitStashRpc>) {
-  const { code, stderr } = await runGit(cwd, ["stash", "push"]);
+  const { code, stderr } = await runGit(cwd, ["stash", "push", "--include-untracked"]);
   if (code !== 0) return { ok: false, error: stderr.trim() || "git stash failed" };
   return { ok: true };
 }
@@ -545,6 +561,7 @@ export async function generateMessage(
     "- Always add a body when the change set has more than one file or one concern;",
     "  use one bullet per concern, wrapped at 72 characters.",
     "- Cover EVERY change listed in the summary, even if the diff below is truncated.",
+    "- Write the subject and body in Chinese (中文); keep the type (feat/fix/...) and scope as-is.",
     "- Output ONLY the commit message. No code fences, no explanations, no markdown.",
     "",
     "Changes summary:",
@@ -559,14 +576,22 @@ export async function generateMessage(
 
   const providerValue = (provider ?? "").trim() || "claude/claude-sonnet-5-5";
   // Reuse the current workspace instead of creating a fresh one per request.
-  const agent = await paseo.workspaces.ref(workspaceId).agents.create({
-    config: { provider: providerValue },
-    title: "Commit message",
-    prompt,
-    autoArchive: true,
-  });
-
-  const result = await agent.waitForFinish(180_000);
+  let result;
+  try {
+    const agent = await paseo.workspaces.ref(workspaceId).agents.create({
+      config: { provider: providerValue },
+      title: "Commit message",
+      prompt,
+      autoArchive: true,
+    });
+    result = await agent.waitForFinish(180_000);
+  } catch (err) {
+    console.error("[git.message] agent failed", err);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
   const text = result.lastMessage ?? "";
   console.log(
     `[git.message] status=${result.status} raw=${text.length} chars err=${result.error ?? "-"}`,
