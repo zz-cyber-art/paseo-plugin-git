@@ -118,6 +118,9 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
   const [newBranchName, setNewBranchName] = useState("");
   const [stagedExpanded, setStagedExpanded] = useState<Set<string>>(new Set());
   const [changesExpanded, setChangesExpanded] = useState<Set<string>>(new Set());
+  const [confirm, setConfirm] = useState<{ title: string; message: string; action: () => void } | null>(null);
+  const askConfirm = (title: string, message: string, action: () => void) =>
+    setConfirm({ title, message, action });
   const settings = useSettings(gitSettings);
 
   const statusQuery = useQuery({
@@ -383,7 +386,11 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
               accessibilityRole="button"
               accessibilityLabel={`Revert changes to ${file.path}`}
               style={({ pressed }) => [styles.dangerButton, pressed && { opacity: 0.6 }]}
-              onPress={() => discardMutation.mutate({ path: file.path, untracked: false })}
+              onPress={() =>
+                askConfirm(`Revert ${basename(file.path)}`, "Discard all changes to this file?", () =>
+                  discardMutation.mutate({ path: file.path, untracked: false }),
+                )
+              }
             >
               <Text style={styles.dangerButtonText}>Revert</Text>
             </Pressable>
@@ -392,7 +399,11 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
             accessibilityRole="button"
             accessibilityLabel={`Delete ${file.path}`}
             style={({ pressed }) => [styles.dangerButton, pressed && { opacity: 0.6 }]}
-            onPress={() => deleteMutation.mutate({ path: file.path, tracked: !isUntracked })}
+            onPress={() =>
+              askConfirm(`Delete ${basename(file.path)}`, `Remove this file?${isUntracked ? "" : "  (git rm)"}`, () =>
+                deleteMutation.mutate({ path: file.path, tracked: !isUntracked }),
+              )
+            }
           >
             <Text style={styles.dangerButtonText}>Delete</Text>
           </Pressable>
@@ -444,10 +455,12 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
               <Pressable
                 accessibilityRole="button"
                 style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
-                onPress={() => {
+                onPress={() =>
+                askConfirm(`Revert ${dir.name}/`, `Discard changes of ${dir.count} files in this folder?`, () => {
                   const tracked = allFiles.filter(f => f.status !== "?").map(f => f.path);
                   if (tracked.length > 0) revertPathsMutation.mutate(tracked);
-                }}
+                })
+              }
                 disabled={revertPathsMutation.isPending}
               >
                 <Text style={styles.smallButtonText}>Revert</Text>
@@ -455,11 +468,13 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
               <Pressable
                 accessibilityRole="button"
                 style={({ pressed }) => [styles.dangerButton, pressed && { opacity: 0.6 }]}
-                onPress={() => {
+                onPress={() =>
+                askConfirm(`Delete ${dir.name}/`, `Delete ${dir.count} files in this folder?${allFiles.some(f => f.status !== "?") ? "  (tracked files will be git-removed)" : ""}`, () => {
                   const tracked = allFiles.filter(f => f.status !== "?").map(f => f.path);
                   const untracked = allFiles.filter(f => f.status === "?").map(f => f.path);
                   if (tracked.length + untracked.length > 0) deletePathsMutation.mutate({ tracked, untracked });
-                }}
+                })
+              }
                 disabled={deletePathsMutation.isPending}
               >
                 <Text style={styles.dangerButtonText}>Delete</Text>
@@ -866,6 +881,40 @@ export function GitPanel({ theme, layout, workspaceId }: PluginWorkspacePanelPro
             {createBranchMutation.data?.error && (
               <Text style={styles.error}>{createBranchMutation.data.error}</Text>
             )}
+          </View>
+        </Modal.Content>
+      </Modal>
+
+      <Modal
+        open={confirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirm(null);
+        }}
+        title="Confirm"
+      >
+        <Modal.Content>
+          <View style={{ gap: 12 }}>
+            <Text style={styles.title}>{confirm?.title}</Text>
+            <Text style={styles.muted}>{confirm?.message}</Text>
+            <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
+              <Pressable
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.smallButton, pressed && { opacity: 0.6 }]}
+                onPress={() => setConfirm(null)}
+              >
+                <Text style={styles.smallButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.dangerButton, pressed && { opacity: 0.6 }]}
+                onPress={() => {
+                  confirm?.action();
+                  setConfirm(null);
+                }}
+              >
+                <Text style={styles.dangerButtonText}>Confirm</Text>
+              </Pressable>
+            </View>
           </View>
         </Modal.Content>
       </Modal>
